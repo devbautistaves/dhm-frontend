@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { productsApi } from '../services/api';
 
 function levenshtein(a, b) {
@@ -22,23 +22,35 @@ function isSimilar(a, b, threshold = 0.75) {
   return 1 - levenshtein(na, nb) / maxLen >= threshold;
 }
 
+const URL_REGEX = /https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp|svg)(\?[^\s]*)?/i;
+const PRICE_REGEX = /\$\s?([\d.,]+)/;
+
 function parseBacoText(text) {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
   const products = [];
   let current = null;
 
   for (const line of lines) {
-    const priceMatch = line.match(/\$\s?([\d.,]+)/);
-    if (priceMatch) {
+    const priceMatch = line.match(PRICE_REGEX);
+    const urlMatch = line.match(URL_REGEX);
+
+    if (urlMatch) {
+      // línea con URL de imagen
+      if (current) current.image = urlMatch[0];
+    } else if (priceMatch) {
+      // línea con precio → cierra el producto actual
       if (current) {
         current.price = parseFloat(priceMatch[1].replace(/\./g, '').replace(',', '.'));
         products.push(current);
         current = null;
       }
     } else if (line.length > 3) {
+      // línea de nombre → abre nuevo producto
+      if (current) products.push(current); // guardar sin precio si quedó colgado
       current = { name: line, price: 0, category: '', description: '', image: '', noStock: false };
     }
   }
+  if (current) products.push(current);
   return products;
 }
 
@@ -46,10 +58,19 @@ export default function BacoImport({ categories, onImported, onClose }) {
   const [text, setText] = useState('');
   const [parsed, setParsed] = useState([]);
   const [step, setStep] = useState('input');
-  const [existingNames, setExistingNames] = useState([]);
   const [selected, setSelected] = useState([]);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState('');
+  const fileRef = useRef(null);
+
+  const handleFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setText(ev.target.result);
+    reader.readAsText(file, 'UTF-8');
+    e.target.value = '';
+  };
 
   const handleParse = async () => {
     const items = parseBacoText(text);
@@ -57,7 +78,6 @@ export default function BacoImport({ categories, onImported, onClose }) {
 
     const res = await productsApi.getAll({ limit: 9999 });
     const names = res.data.products.map((p) => p.name);
-    setExistingNames(names);
 
     const withDupe = items.map((item) => ({
       ...item,
@@ -65,9 +85,13 @@ export default function BacoImport({ categories, onImported, onClose }) {
     }));
 
     setParsed(withDupe);
-    setSelected(withDupe.filter((i) => !i.duplicate).map((_, idx) =>
-      withDupe.findIndex((x) => x === withDupe.filter((i) => !i.duplicate)[idx])
-    ));
+    // preseleccionar los que NO son duplicados
+    setSelected(
+      withDupe.reduce((acc, item, idx) => {
+        if (!item.duplicate) acc.push(idx);
+        return acc;
+      }, [])
+    );
     setStep('review');
   };
 
@@ -75,10 +99,13 @@ export default function BacoImport({ categories, onImported, onClose }) {
     setSelected((s) => s.includes(idx) ? s.filter((i) => i !== idx) : [...s, idx]);
   };
 
+  const toggleAll = () => {
+    setSelected(selected.length === parsed.length ? [] : parsed.map((_, i) => i));
+  };
+
   const handleImport = async () => {
     const toImport = selected.map((i) => parsed[i]);
     if (!toImport.length) return;
-
     try {
       setImporting(true);
       for (const p of toImport) {
@@ -89,6 +116,7 @@ export default function BacoImport({ categories, onImported, onClose }) {
       onImported();
     } catch (err) {
       setResult(`Error: ${err.response?.data?.error || err.message}`);
+      setStep('done');
     } finally {
       setImporting(false);
     }
@@ -102,14 +130,27 @@ export default function BacoImport({ categories, onImported, onClose }) {
           <button className="modal-close" onClick={onClose}><i className="fas fa-times" /></button>
         </div>
 
+        {/* ── PASO 1: INPUT ── */}
         {step === 'input' && (
           <div className="baco-input">
-            <p className="baco-hint">Pegá el texto copiado del catálogo de Baco (nombre + precio por línea):</p>
+            <p className="baco-hint">
+              Pegá el texto del catálogo de Baco o importá un archivo <code>.txt</code>.<br />
+              Formato soportado: nombre → precio ($) → URL de imagen (opcional).
+            </p>
+
+            <div className="baco-file-row">
+              <button className="btn-export" onClick={() => fileRef.current.click()}>
+                <i className="fas fa-file-alt" /> Cargar archivo .txt
+              </button>
+              <input ref={fileRef} type="file" accept=".txt,text/plain" onChange={handleFile} hidden />
+              {text && <span className="baco-char-count">{text.length} caracteres cargados</span>}
+            </div>
+
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={12}
-              placeholder="Adhesivo PVC 60cm3&#10;$1.150&#10;Cable gemelo 2x1.5mm&#10;$2.300..."
+              placeholder={`Adhesivo PVC 60cm3\n$1.150\nhttps://distribuidorabaco.com.ar/uploads/123.jpg\nCable gemelo 2x1.5mm\n$2.300\n...`}
             />
             <div className="form-actions">
               <button className="btn-secondary" onClick={onClose}>Cancelar</button>
@@ -120,12 +161,18 @@ export default function BacoImport({ categories, onImported, onClose }) {
           </div>
         )}
 
+        {/* ── PASO 2: REVISIÓN ── */}
         {step === 'review' && (
           <div className="baco-review">
-            <p className="baco-hint">
-              Encontrados: <strong>{parsed.length}</strong> productos.
-              <span className="dup-badge"> {parsed.filter((p) => p.duplicate).length} posibles duplicados</span>
-            </p>
+            <div className="baco-review-stats">
+              <span>Encontrados: <strong>{parsed.length}</strong></span>
+              <span className="dup-badge"><i className="fas fa-exclamation-triangle" /> {parsed.filter((p) => p.duplicate).length} posibles duplicados</span>
+              <span className="img-badge"><i className="fas fa-image" /> {parsed.filter((p) => p.image).length} con imagen</span>
+              <button className="btn-select-all" onClick={toggleAll}>
+                {selected.length === parsed.length ? 'Deseleccionar todos' : 'Seleccionar todos'}
+              </button>
+            </div>
+
             <div className="baco-list">
               {parsed.map((item, idx) => (
                 <div
@@ -133,13 +180,32 @@ export default function BacoImport({ categories, onImported, onClose }) {
                   className={`baco-item ${item.duplicate ? 'baco-dup' : ''} ${selected.includes(idx) ? 'baco-sel' : ''}`}
                   onClick={() => toggleSelect(idx)}
                 >
-                  <input type="checkbox" checked={selected.includes(idx)} onChange={() => {}} />
+                  <input type="checkbox" checked={selected.includes(idx)} onChange={() => {}} onClick={(e) => e.stopPropagation()} />
+
+                  {item.image ? (
+                    <img
+                      src={item.image}
+                      alt=""
+                      className="baco-thumb"
+                      onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                  ) : (
+                    <div className="baco-thumb-empty"><i className="fas fa-image" /></div>
+                  )}
+
                   <span className="baco-name">{item.name}</span>
                   <span className="baco-price">${item.price.toLocaleString('es-AR')}</span>
-                  {item.duplicate && <span className="baco-dup-label">posible duplicado</span>}
+
+                  {item.image && (
+                    <span className="baco-img-label" title={item.image}>
+                      <i className="fas fa-check-circle" />
+                    </span>
+                  )}
+                  {item.duplicate && <span className="baco-dup-label">duplicado</span>}
                 </div>
               ))}
             </div>
+
             <div className="form-actions">
               <button className="btn-secondary" onClick={() => setStep('input')}>Atrás</button>
               <button className="btn-primary" onClick={handleImport} disabled={importing || !selected.length}>
@@ -151,6 +217,7 @@ export default function BacoImport({ categories, onImported, onClose }) {
           </div>
         )}
 
+        {/* ── PASO 3: RESULTADO ── */}
         {step === 'done' && (
           <div className="baco-done">
             <p>{result}</p>

@@ -348,6 +348,33 @@ body {
 .baco-done { text-align: center; padding: 40px 24px; }
 .baco-done p { font-size: 1rem; margin-bottom: 20px; color: var(--success); }
 
+.baco-file-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.baco-char-count { font-size: 0.82rem; color: var(--success); font-weight: 600; }
+
+.baco-review-stats {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 12px; font-size: 0.88rem; color: var(--text-light);
+}
+.baco-review-stats strong { color: var(--text); }
+.img-badge { background: #e8f4fd; color: #2980b9; padding: 2px 8px; border-radius: 20px; font-size: 0.8rem; }
+.btn-select-all {
+  margin-left: auto; background: none; border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 20px; cursor: pointer; font-size: 0.8rem; color: var(--text-light);
+}
+.btn-select-all:hover { border-color: var(--primary); color: var(--primary); }
+
+.baco-thumb {
+  width: 40px; height: 40px; object-fit: cover; border-radius: 4px;
+  border: 1px solid var(--border); flex-shrink: 0;
+}
+.baco-thumb-empty {
+  width: 40px; height: 40px; border-radius: 4px; border: 1px dashed var(--border);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--border); font-size: 0.9rem; flex-shrink: 0;
+}
+.baco-img-label { color: var(--success); font-size: 0.85rem; flex-shrink: 0; }
+.baco-dup-label { font-size: 0.75rem; color: #856404; background: #fff3cd; padding: 2px 6px; border-radius: 20px; white-space: nowrap; }
+
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
   .header-content { flex-direction: column; gap: 12px; padding: 12px 0; }
